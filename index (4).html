@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Eyes">
+<meta name="theme-color" content="#0b0807">
+<title>Morning Eyes</title>
+<style>
+/* Layout: one full-bleed black stage with a pair of warm, softly glowing eyes drawn on a canvas.
+   A control tray slides up when you tap the screen. Single dark look by choice: OLED screen in a dim bathroom,
+   warm light instead of blue so it stays easy on the eyes early and late. */
+:root {
+  --bg: #0b0807;
+  --eye: #f6d3b3;
+  --glow: rgba(246, 190, 140, 0.34);
+  --ui: #17110e;
+  --ui-line: #2f251e;
+  --ui-fg: #ecdfd3;
+  --ui-mute: #a99a8d;
+  --ui-on: #f6d3b3;
+  --ui-on-fg: #1c120b;
+  --font-ui: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+:root.dim { --eye: #8e6d56; --glow: rgba(160, 110, 70, 0.16); }
+:root.asleep { --eye: #5b4636; --glow: rgba(160, 110, 70, 0.06); }
+:root { background: var(--bg); }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ui-fg);
+  font-family: var(--font-ui);
+  padding-block: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#stage { position: relative; height: 100%; }
+#cv {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+}
+
+#tray {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: grid; grid-template-columns: minmax(0, 560px); justify-content: center; gap: 14px;
+  padding-top: 16px;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--ui);
+  border-top: 1px solid var(--ui-line);
+  border-radius: 20px 20px 0 0;
+  transform: translateY(105%);
+  transition: transform 0.32s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+#tray.show { transform: none; }
+.label {
+  margin: 0 0 8px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ui-mute);
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  min-height: 44px; padding: 0 16px; border-radius: 999px;
+  border: 1px solid var(--ui-line); background: transparent; color: var(--ui-fg);
+  font: inherit; font-size: 15px; cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--ui-on); color: var(--ui-on-fg); border-color: var(--ui-on); }
+.chip:disabled { opacity: 0.45; cursor: default; }
+.chip:focus-visible { outline: 2px solid var(--ui-on); outline-offset: 2px; }
+.note { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ui-mute); max-width: 56ch; }
+#tray { max-height: 82vh; overflow-y: auto; touch-action: pan-y; }
+#say {
+  position: absolute; left: 0; right: 0; top: calc(50% + var(--ew, 140px) * 1.02);
+  margin: 0; padding-inline: 8px; text-align: center;
+  font-size: clamp(22px, 6.4vmin, 34px); line-height: 1.25; letter-spacing: 0.01em;
+  color: var(--eye); opacity: 0; transform: translateY(6px);
+  transition: opacity 0.45s, transform 0.45s; pointer-events: none;
+}
+#say.on { opacity: 0.92; transform: none; }
+</style>
+</head>
+<body>
+
+
+<main id="stage">
+  <canvas id="cv" role="img" aria-label="A pair of softly glowing eyes that blink and look around"></canvas>
+  <p id="say" aria-live="polite"></p>
+</main>
+
+<aside id="tray" aria-label="Eye controls" aria-hidden="true" inert>
+  <div>
+    <p class="label" id="moodLabel">Mood</p>
+    <div class="row" role="group" aria-labelledby="moodLabel">
+      <button class="chip" type="button" data-mood="idle" aria-pressed="true">Awake</button>
+      <button class="chip" type="button" data-mood="listening" aria-pressed="false">Listening</button>
+      <button class="chip" type="button" data-mood="thinking" aria-pressed="false">Thinking</button>
+      <button class="chip" type="button" data-mood="happy" aria-pressed="false">Happy</button>
+      <button class="chip" type="button" data-mood="sleepy" aria-pressed="false">Sleepy</button>
+      <button class="chip" type="button" data-mood="private" aria-pressed="false">Private</button>
+      <button class="chip" type="button" data-mood="asleep" aria-pressed="false">Sleep</button>
+    </div>
+  </div>
+  <div>
+    <p class="label" id="sayLabel">Say</p>
+    <div class="row" role="group" aria-labelledby="sayLabel">
+      <button class="chip" type="button" data-say="Hey there">Hey there</button>
+      <button class="chip" type="button" data-say="Good morning">Good morning</button>
+      <button class="chip" type="button" data-say="How are you feeling?">How are you feeling?</button>
+      <button class="chip" type="button" id="voiceBtn" aria-pressed="true">Voice</button>
+    </div>
+  </div>
+  <div>
+    <p class="label" id="screenLabel">Screen</p>
+    <div class="row" role="group" aria-labelledby="screenLabel">
+      <button class="chip" type="button" id="dimBtn" aria-pressed="false">Dim</button>
+      <button class="chip" type="button" id="awakeBtn" aria-pressed="false">Keep screen on</button>
+      <button class="chip" type="button" id="autoSleepBtn" aria-pressed="false">Sleep after 1 min</button>
+      <button class="chip" type="button" id="fsBtn" aria-pressed="false" hidden>Full screen</button>
+    </div>
+  </div>
+  <p class="note" id="note">Tap the screen to hide this. Press and drag to make the eyes follow your finger. Private closes the eyes, which is how the mic-off state will look. Sleep dims and closes them, and any touch wakes them.</p>
+</aside>
+
+<script>
+(function () {
+  'use strict';
+  var root = document.documentElement;
+  var stage = document.getElementById('stage');
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var tray = document.getElementById('tray');
+  var note = document.getElementById('note');
+  var dimBtn = document.getElementById('dimBtn');
+  var awakeBtn = document.getElementById('awakeBtn');
+  var fsBtn = document.getElementById('fsBtn');
+  var chips = tray.querySelectorAll('[data-mood]');
+  var reduce = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  var W = 1, H = 1, dpr = 1, ew = 120, EYE = '#f6d3b3', GLOW = 'rgba(246,190,140,.34)';
+  function rnd(a, b) { return a + Math.random() * (b - a); }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  function readColors() {
+    var c = getComputedStyle(root).getPropertyValue('--eye').trim();
+    if (c) EYE = c;
+    var g = getComputedStyle(root).getPropertyValue('--glow').trim();
+    if (g) GLOW = g;
+  }
+  function fit() {
+    var r = stage.getBoundingClientRect();
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    dpr = Math.min(window.devicePixelRatio || 1, 3);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    ew = Math.min(Math.min(W, H) * (W > H ? 0.44 : 0.38), 380);
+    stage.style.setProperty('--ew', ew + 'px');
+  }
+
+  /* current values (P) ease toward targets (T) every frame */
+  var P = { gx: 0, gy: 0, open: 1, lt: 0, lb: 0, tilt: 0, scale: 1 };
+  var T = { gx: 0, gy: 0, open: 1, lt: 0, lb: 0, tilt: 0, scale: 1 };
+  var RATE = { gx: 9, gy: 9, lt: 7, lb: 7, tilt: 7, scale: 6 };
+  var speed = 1, dragging = false;
+
+  function step(dt) {
+    for (var k in RATE) {
+      var r = (k === 'gx' || k === 'gy') && dragging ? 18 : RATE[k];
+      P[k] += (T[k] - P[k]) * (1 - Math.exp(-dt * r));
+    }
+    var ro = (T.open < P.open ? 60 : 26) * speed;
+    P.open += (T.open - P.open) * (1 - Math.exp(-dt * ro));
+  }
+
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawEye(x, side) {
+    var w = ew, h = Math.max(ew * 1.3 * P.open, ew * 0.07), r = Math.min(ew * 0.46, h / 2);
+    ctx.save();
+    ctx.translate(x, 0);
+    rr(-w / 2, -h / 2, w, h, r);
+    ctx.shadowColor = GLOW; ctx.shadowBlur = 26 * dpr;
+    ctx.fillStyle = EYE;
+    ctx.fill();
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+    rr(-w / 2, -h / 2, w, h, r);
+    ctx.clip();
+    ctx.fillRect(-w / 2, -h / 2, w, h);
+    ctx.restore();
+    /* lids erase inside a slightly larger clip so no antialiased rim of the eye is left behind */
+    ctx.save();
+    ctx.translate(x, 0);
+    rr(-w / 2 - 3, -h / 2 - 3, w + 6, h + 6, r + 3);
+    ctx.clip();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000';
+    /* upper lid, slanted by tilt: positive tilt drops the outer corner */
+    var lt = P.lt * h, sl = P.tilt * h * 0.25, yl = lt - side * sl, yr = lt + side * sl;
+    if (lt > 0.5 || Math.abs(sl) > 0.5) {
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 - 8, -h / 2 - 8);
+      ctx.lineTo(w / 2 + 8, -h / 2 - 8);
+      ctx.lineTo(w / 2 + 8, -h / 2 + yr);
+      ctx.lineTo(-w / 2 - 8, -h / 2 + yl);
+      ctx.closePath();
+      ctx.fill();
+    }
+    /* lower lid rising, which makes the happy arch */
+    if (P.lb > 0.01) {
+      var rise = P.lb * h * 0.58, ry = h * 0.62;
+      ctx.beginPath();
+      ctx.ellipse(0, h / 2 - rise + ry, w * 0.85, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function draw(t) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var b = reduce ? 1 : 1 + Math.sin(t / 1000 * 1.15) * 0.012;
+    ctx.save();
+    ctx.translate(W / 2 + P.gx * ew, H / 2 + P.gy * ew);
+    var tk = talking && !reduce ? 1 + Math.sin(t / 1000 * 11) * 0.025 : 1;
+    ctx.scale(P.scale * b * tk, P.scale * b * tk);
+    var off = ew / 2 + ew * 0.14;
+    drawEye(-off, -1);
+    drawEye(off, 1);
+    ctx.restore();
+  }
+
+  var last = 0;
+  function frame(t) {
+    var dt = Math.min(0.05, (t - last) / 1000 || 0.016);
+    last = t;
+    step(dt);
+    draw(t);
+    requestAnimationFrame(frame);
+  }
+
+  /* moods: lid shape, size, how often to blink, where to look */
+  var MOODS = {
+    idle:      { lt: 0,   lb: 0,   tilt: 0,    scale: 1,    blink: [2400, 6200], blinkMs: 110, gaze: [1300, 4200], ax: 0.15,  ay: 0.08,  bx: 0, by: 0,    speed: 1 },
+    listening: { lt: 0,   lb: 0,   tilt: 0.2,  scale: 1.08, blink: [3800, 8000], blinkMs: 120, gaze: [1800, 3600], ax: 0.025, ay: 0.02,  bx: 0, by: -0.03, speed: 1 },
+    thinking:  { lt: 0.1, lb: 0,   tilt: -0.12, scale: 0.98, blink: [2600, 5200], blinkMs: 110, gaze: [1000, 1900], path: [[-0.2, -0.17], [0.18, -0.2], [0.05, -0.1]], speed: 1 },
+    happy:     { lt: 0,   lb: 0.5, tilt: 0,    scale: 1.03, blink: [3200, 6500], blinkMs: 120, gaze: [1100, 2400], ax: 0.05,  ay: 0.025, bx: 0, by: 0.01, speed: 1 },
+    sleepy:    { lt: 0.4, lb: 0,   tilt: 0.14, scale: 0.97, blink: [1800, 4200], blinkMs: 300, gaze: [2600, 5200], ax: 0.05,  ay: 0.025, bx: 0, by: 0.09, speed: 0.4, droop: true },
+    'private': { closed: true, lt: 0, lb: 0, tilt: 0, scale: 0.96, bx: 0, by: 0.06, speed: 0.5 },
+    asleep:    { closed: true, lt: 0, lb: 0, tilt: 0, scale: 0.94, bx: 0, by: 0.08, speed: 0.35 }
+  };
+  var mood = 'idle', gen = 0, pathIdx = 0;
+  function M() { return MOODS[mood]; }
+
+  function pickGaze() {
+    var m = M(), k = reduce ? 0.4 : 1;
+    if (m.closed) return;
+    if (m.path) {
+      pathIdx = (pathIdx + 1) % m.path.length;
+      T.gx = m.path[pathIdx][0] * k; T.gy = m.path[pathIdx][1] * k;
+      return;
+    }
+    if (Math.random() < 0.3) {
+      T.gx = (m.bx || 0) + rnd(-0.02, 0.02); T.gy = (m.by || 0) + rnd(-0.015, 0.015);
+      return;
+    }
+    T.gx = (m.bx || 0) + rnd(-m.ax, m.ax) * k;
+    T.gy = (m.by || 0) + rnd(-m.ay, m.ay) * k;
+  }
+
+  function blink(m, again) {
+    T.open = 0.04;
+    var hold = m.blinkMs;
+    if (m.droop && !again && Math.random() < 0.3) hold = 900 + Math.random() * 500;
+    setTimeout(function () {
+      if (M().closed) return;
+      T.open = 1;
+      if (!again && !m.droop && Math.random() < 0.16) {
+        setTimeout(function () { if (!M().closed) blink(m, true); }, 180);
+      }
+    }, hold);
+  }
+  function schedBlink(g) {
+    var m = M();
+    setTimeout(function () {
+      if (g !== gen) return;
+      blink(m, false);
+      schedBlink(g);
+    }, rnd(m.blink[0], m.blink[1]));
+  }
+  function schedGaze(g) {
+    var m = M();
+    setTimeout(function () {
+      if (g !== gen) return;
+      if (!dragging) pickGaze();
+      schedGaze(g);
+    }, rnd(m.gaze[0], m.gaze[1]));
+  }
+
+  function setMood(name) {
+    if (!MOODS[name]) return;
+    mood = name; gen++;
+    root.classList.toggle('asleep', name === 'asleep'); readColors(); bumpSleep();
+    var m = M();
+    T.lt = m.lt; T.lb = m.lb; T.tilt = m.tilt; T.scale = m.scale;
+    speed = m.speed;
+    if (m.closed) {
+      T.open = 0; T.gx = m.bx; T.gy = m.by;
+    } else {
+      T.open = 1; pickGaze();
+      schedBlink(gen); schedGaze(gen);
+    }
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].setAttribute('aria-pressed', chips[i].getAttribute('data-mood') === name ? 'true' : 'false');
+    }
+  }
+
+  /* tray */
+  var hideT = 0;
+  function armHide() { clearTimeout(hideT); hideT = setTimeout(hideTray, 8000); }
+  function showTray() {
+    tray.classList.add('show'); tray.removeAttribute('inert'); tray.setAttribute('aria-hidden', 'false'); armHide();
+  }
+  function hideTray() {
+    clearTimeout(hideT);
+    tray.classList.remove('show'); tray.setAttribute('inert', ''); tray.setAttribute('aria-hidden', 'true');
+  }
+  tray.addEventListener('pointerdown', function () { armHide(); bumpSleep(); });
+  for (var i = 0; i < chips.length; i++) {
+    chips[i].addEventListener('click', function (e) { setMood(e.currentTarget.getAttribute('data-mood')); armHide(); });
+  }
+
+  /* dim */
+  function setDim(on) {
+    root.classList.toggle('dim', on);
+    dimBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    readColors();
+    try { localStorage.setItem('morning-eyes-dim', on ? '1' : '0'); } catch (e) {}
+  }
+  dimBtn.addEventListener('click', function () { setDim(!root.classList.contains('dim')); armHide(); });
+  try { if (localStorage.getItem('morning-eyes-dim') === '1') setDim(true); } catch (e) {}
+
+  /* keep the screen on, where the browser allows it */
+  var lock = null, wantAwake = false;
+  function setAwakeUI(on) { awakeBtn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+  function acquire() {
+    if (!navigator.wakeLock) { return Promise.reject(new Error('unsupported')); }
+    return navigator.wakeLock.request('screen').then(function (l) { lock = l; setAwakeUI(true); });
+  }
+  function setAwake(on) {
+    wantAwake = on;
+    if (on) {
+      return acquire().catch(function () {
+        wantAwake = false; setAwakeUI(false); awakeBtn.disabled = true;
+        note.textContent = 'This page cannot keep the screen on here. While testing, set Settings > Display & Brightness > Auto-Lock to Never on the iPhone.';
+      });
+    }
+    setAwakeUI(false);
+    if (lock) { lock.release().catch(function () {}); lock = null; }
+    return Promise.resolve();
+  }
+  awakeBtn.addEventListener('click', function () { setAwake(!wantAwake); armHide(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && wantAwake) { acquire().catch(function () {}); }
+  });
+  if (!navigator.wakeLock) { awakeBtn.disabled = true; }
+
+  /* full screen where supported (desktop browsers; iPhone Safari does not offer it) */
+  if (document.fullscreenEnabled) {
+    fsBtn.hidden = false;
+    fsBtn.addEventListener('click', function () {
+      var p = document.fullscreenElement ? document.exitFullscreen() : root.requestFullscreen();
+      if (p && p.catch) p.catch(function () {});
+      armHide();
+    });
+  }
+
+  /* speech: a caption under the eyes, plus a spoken voice when the browser allows it */
+  var sayEl = document.getElementById('say');
+  var voiceBtn = document.getElementById('voiceBtn');
+  var canSpeak = false, voice = null, voiceOn = true;
+  var talking = false, sayT = 0, endT = 0, sayRestore = false;
+  try { canSpeak = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'; } catch (e) {}
+  try { if (localStorage.getItem('morning-eyes-voice') === '0') voiceOn = false; } catch (e) {}
+  function pickVoice() {
+    try {
+      var vs = speechSynthesis.getVoices();
+      voice = vs.filter(function (v) { return /^en[-_]US/i.test(v.lang) && /samantha|ava|allison|nicky|serena|karen/i.test(v.name); })[0] ||
+              vs.filter(function (v) { return /^en/i.test(v.lang); })[0] || null;
+    } catch (e) {}
+  }
+  if (canSpeak) { pickVoice(); try { speechSynthesis.onvoiceschanged = pickVoice; } catch (e) {} }
+  voiceBtn.setAttribute('aria-pressed', voiceOn && canSpeak ? 'true' : 'false');
+  if (!canSpeak) { voiceBtn.disabled = true; }
+
+  function finishSay() {
+    talking = false;
+    clearTimeout(sayT);
+    sayT = setTimeout(function () { sayEl.classList.remove('on'); }, 1400);
+    if (sayRestore) { sayRestore = false; if (mood === 'happy') setMood('idle'); }
+  }
+  function say(text) {
+    clearTimeout(sayT); clearTimeout(endT);
+    if (canSpeak) { try { speechSynthesis.cancel(); } catch (e) {} }
+    if (mood === 'asleep') setMood('idle');
+    if (mood === 'idle') { setMood('happy'); sayRestore = true; }
+    bumpSleep();
+    sayEl.textContent = text;
+    sayEl.classList.add('on');
+    talking = true;
+    var spoken = false;
+    if (voiceOn && canSpeak && mood !== 'private') {
+      try {
+        var u = new SpeechSynthesisUtterance(text);
+        if (voice) u.voice = voice;
+        u.rate = 0.95; u.pitch = 1.08;
+        u.onend = finishSay; u.onerror = finishSay;
+        speechSynthesis.speak(u);
+        spoken = true;
+      } catch (e) {}
+    }
+    /* if the browser never reports the end of speech, move on after a safe time */
+    endT = setTimeout(finishSay, (spoken ? 2500 : 900) + text.length * (spoken ? 120 : 75));
+  }
+  var sayChips = tray.querySelectorAll('[data-say]');
+  for (var j = 0; j < sayChips.length; j++) {
+    sayChips[j].addEventListener('click', function (e) {
+      hideTray();
+      say(e.currentTarget.getAttribute('data-say'));
+    });
+  }
+  voiceBtn.addEventListener('click', function () {
+    voiceOn = !voiceOn;
+    voiceBtn.setAttribute('aria-pressed', voiceOn ? 'true' : 'false');
+    try { localStorage.setItem('morning-eyes-voice', voiceOn ? '1' : '0'); } catch (e) {}
+    if (voiceOn) { hideTray(); say('Hey there'); } else { armHide(); try { speechSynthesis.cancel(); } catch (e) {} }
+  });
+
+  /* sleep and wake: the eyes close and dim after a quiet minute, and any touch wakes them.
+     A movement sensor would simply call morningEyes.wake() */
+  var sleepOn = false, sleepT = 0;
+  var autoSleepBtn = document.getElementById('autoSleepBtn');
+  function bumpSleep() {
+    clearTimeout(sleepT);
+    if (sleepOn && mood !== 'asleep') sleepT = setTimeout(function () { setMood('asleep'); }, 60000);
+  }
+  function wake() {
+    if (mood !== 'asleep') return;
+    setMood('happy');
+    speed = 0.3;
+    setTimeout(function () { speed = M().speed; }, 900);
+    sayRestore = true;
+    say('Hey there');
+  }
+  autoSleepBtn.addEventListener('click', function () {
+    sleepOn = !sleepOn;
+    autoSleepBtn.setAttribute('aria-pressed', sleepOn ? 'true' : 'false');
+    bumpSleep(); armHide();
+  });
+
+  /* touch: tap toggles the tray, press and drag makes the eyes follow */
+  var down = null, firstGesture = true;
+  function lookAt(x, y) {
+    if (M().closed) return;
+    var r = stage.getBoundingClientRect();
+    T.gx = clamp((x - (r.left + r.width / 2)) / (r.width / 2), -1, 1) * 0.24;
+    T.gy = clamp((y - (r.top + r.height / 2)) / (r.height / 2), -1, 1) * 0.2;
+  }
+  document.body.addEventListener('pointerdown', function (e) {
+    if (e.target.closest && e.target.closest('#tray')) return;
+    down = { x: e.clientX, y: e.clientY, t: performance.now(), moved: false, wasAsleep: mood === 'asleep' };
+  });
+  window.addEventListener('pointermove', function (e) {
+    if (!down) return;
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 10) down.moved = true;
+    if (down.moved) { dragging = true; lookAt(e.clientX, e.clientY); }
+  });
+  function release() {
+    if (!down) return;
+    var d = down; down = null;
+    bumpSleep();
+    if (d.wasAsleep) { dragging = false; wake(); return; }
+    if (firstGesture) { firstGesture = false; if (!wantAwake && navigator.wakeLock) { setAwake(true); } }
+    if (!d.moved && performance.now() - d.t < 500) {
+      if (tray.classList.contains('show')) hideTray(); else showTray();
+    }
+    if (dragging) { dragging = false; setTimeout(function () { if (!dragging) pickGaze(); }, 600); }
+  }
+  window.addEventListener('pointerup', release);
+  window.addEventListener('pointercancel', release);
+
+  window.addEventListener('resize', fit);
+  if (window.ResizeObserver) { new ResizeObserver(fit).observe(stage); }
+
+  /* small hook for demos and testing */
+  window.morningEyes = { setMood: setMood, showTray: showTray, hideTray: hideTray, wake: wake, say: say };
+
+  try {
+    readColors(); fit(); setMood('idle'); draw(0);
+    requestAnimationFrame(frame);
+    showTray();
+  } catch (err) {
+    var m = document.createElement('p');
+    m.style.cssText = 'position:fixed;left:16px;right:16px;top:30%;color:#ecdfd3;font:15px/1.4 system-ui,sans-serif;z-index:9';
+    m.textContent = 'Eyes could not start: ' + (err && err.message ? err.message : err);
+    document.body.appendChild(m);
+  }
+})();
+</script>
+
+</body>
+</html>
