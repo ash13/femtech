@@ -14,14 +14,7 @@ const CLIENT_SECRET = process.env.OURA_CLIENT_SECRET || '';
 const sessions = new Map();
 const indexFile = path.join(__dirname, 'index.html');
 
-if (!BASE_URL || !CLIENT_ID || !CLIENT_SECRET) {
-  console.error('Set BASE_URL, OURA_CLIENT_ID, and OURA_CLIENT_SECRET before starting.');
-  process.exit(1);
-}
-if (!BASE_URL.startsWith('https://')) {
-  console.error('BASE_URL must be the public HTTPS address of this service.');
-  process.exit(1);
-}
+function configReady() { return BASE_URL.startsWith('https://') && !!CLIENT_ID && !!CLIENT_SECRET; }
 
 function send(res, status, body, type = 'application/json; charset=utf-8', headers = {}) {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
@@ -42,7 +35,7 @@ function sessionFor(req, res, create = false) {
   res.setHeader('Set-Cookie', `morning_eyes=${nextId}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`);
   return session;
 }
-const redirectUri = `${BASE_URL}/oauth/callback`;
+function redirectUri() { return `${BASE_URL}/oauth/callback`; }
 function randomId() { return crypto.randomBytes(32).toString('hex'); }
 function base64url(buffer) { return buffer.toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_'); }
 
@@ -66,9 +59,10 @@ async function accessToken(session) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, BASE_URL);
+  const url = new URL(req.url, BASE_URL || 'http://localhost');
   try {
     if (req.method === 'GET' && url.pathname === '/auth/start') {
+      if (!configReady()) return send(res, 503, 'Oura service setup is not finished yet.', 'text/plain; charset=utf-8');
       const session = sessionFor(req, res, true);
       const verifier = randomId();
       const state = randomId();
@@ -77,7 +71,7 @@ const server = http.createServer(async (req, res) => {
       const auth = new URL('https://cloud.ouraring.com/oauth/authorize');
       auth.searchParams.set('response_type', 'code');
       auth.searchParams.set('client_id', CLIENT_ID);
-      auth.searchParams.set('redirect_uri', redirectUri);
+      auth.searchParams.set('redirect_uri', redirectUri());
       auth.searchParams.set('scope', 'daily');
       auth.searchParams.set('state', state);
       auth.searchParams.set('code_challenge', challenge);
@@ -86,13 +80,14 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
     if (req.method === 'GET' && url.pathname === '/oauth/callback') {
+      if (!configReady()) return send(res, 503, 'Oura service setup is not finished yet.', 'text/plain; charset=utf-8');
       const session = sessionFor(req, res);
       const oauth = session?.oauth;
       delete session?.oauth;
       if (url.searchParams.get('error')) return send(res, 400, 'Oura authorization was declined. You can close this page and try again.', 'text/plain; charset=utf-8');
       const code = url.searchParams.get('code');
       if (!session || !oauth || !code || url.searchParams.get('state') !== oauth.state) return send(res, 400, 'Oura sign-in could not be verified. Please start again.', 'text/plain; charset=utf-8');
-      const tokens = await exchange({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: oauth.verifier });
+      const tokens = await exchange({ grant_type: 'authorization_code', code, redirect_uri: redirectUri(), code_verifier: oauth.verifier });
       session.tokens = { ...tokens, expiresAt: Date.now() + Number(tokens.expires_in || 0) * 1000 };
       res.writeHead(302, { Location: '/', 'Cache-Control': 'no-store' });
       return res.end();
