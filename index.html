@@ -86,6 +86,10 @@ body {
   transition: opacity 0.45s, transform 0.45s; pointer-events: none;
 }
 #say.on { opacity: 0.92; transform: none; }
+#ouraStatus { font-size: 13px; line-height: 1.45; color: var(--ui-mute); margin: 8px 0 0; }
+#ouraActions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+#feelings { display:none; }
+#feelings.show { display:block; }
 </style>
 </head>
 <body>
@@ -125,6 +129,29 @@ body {
       <button class="chip" type="button" id="awakeBtn" aria-pressed="false">Keep screen on</button>
       <button class="chip" type="button" id="autoSleepBtn" aria-pressed="false">Sleep after 1 min</button>
       <button class="chip" type="button" id="fsBtn" aria-pressed="false" hidden>Full screen</button>
+    </div>
+  </div>
+  <div>
+    <p class="label" id="ouraLabel">Oura · daily sleep check-in</p>
+    <div id="ouraActions">
+      <button class="chip" type="button" id="ouraBtn">Connect Oura</button>
+      <button class="chip" type="button" id="ouraDisconnect" hidden>Disconnect</button>
+    </div>
+    <p id="ouraStatus" aria-live="polite">Connect Oura to see last night’s sleep summary. Your feeling is yours to report; the score can’t tell the whole story.</p>
+  </div>
+  <div id="feelings">
+    <p class="label" id="dimensionLabel">What feels most present?</p>
+    <div class="row" role="group" aria-labelledby="dimensionLabel">
+      <button class="chip" type="button" data-dimension="body" aria-pressed="true">My body</button>
+      <button class="chip" type="button" data-dimension="work" aria-pressed="false">Work</button>
+      <button class="chip" type="button" data-dimension="relationships" aria-pressed="false">Relationships</button>
+      <button class="chip" type="button" data-dimension="life" aria-pressed="false">Life overall</button>
+    </div>
+    <p class="label" id="feelLabel">How do you feel this morning?</p>
+    <div class="row" role="group" aria-labelledby="feelLabel">
+      <button class="chip" type="button" data-feel="good">I feel good</button>
+      <button class="chip" type="button" data-feel="tired">I feel tired</button>
+      <button class="chip" type="button" data-feel="unsure">Not sure yet</button>
     </div>
   </div>
   <p class="note" id="note">Tap the screen to hide this. Press and drag to make the eyes follow your finger. Private closes the eyes, which is how the mic-off state will look. Sleep dims and closes them, and any touch wakes them.</p>
@@ -450,6 +477,70 @@ body {
     if (voiceOn) { hideTray(); say('Hey there'); } else { armHide(); try { speechSynthesis.cancel(); } catch (e) {} }
   });
 
+  /* Oura connection uses the same-origin service; OAuth tokens never enter this page. */
+  var ouraBtn = document.getElementById('ouraBtn');
+  var ouraDisconnect = document.getElementById('ouraDisconnect');
+  var ouraStatus = document.getElementById('ouraStatus');
+  var feelings = document.getElementById('feelings');
+  function ouraConnected(set) { if (typeof set === 'boolean') document.documentElement.dataset.ouraConnected = set ? 'true' : 'false'; return document.documentElement.dataset.ouraConnected === 'true'; }
+  function localDay(offset) { var d = new Date(); d.setDate(d.getDate() + offset); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+  var selectedDimension = 'body';
+  var dimensionButtons = document.querySelectorAll('[data-dimension]');
+  for (var d = 0; d < dimensionButtons.length; d++) dimensionButtons[d].addEventListener('click', function(e) {
+    selectedDimension = e.currentTarget.getAttribute('data-dimension');
+    for (var k = 0; k < dimensionButtons.length; k++) dimensionButtons[k].setAttribute('aria-pressed', dimensionButtons[k] === e.currentTarget ? 'true' : 'false');
+  });
+  function recordFeeling(feel) {
+    var entry = { date: localDay(0), dimension: selectedDimension, feeling: feel, capturedAt: new Date().toISOString() };
+    try { localStorage.setItem('morning-eyes-checkin-' + entry.date, JSON.stringify(entry)); } catch (e) {}
+    feelings.classList.remove('show');
+    say(feel === 'tired' ? 'Thank you for telling me. Your feeling matters.' : feel === 'good' ? 'I’m glad you’re feeling good.' : 'That’s okay. We can check in again later.');
+  }
+  var feelButtons = feelings.querySelectorAll('[data-feel]');
+  for (var f = 0; f < feelButtons.length; f++) feelButtons[f].addEventListener('click', function(e) { recordFeeling(e.currentTarget.getAttribute('data-feel')); });
+  async function loadOura() {
+    if (!ouraConnected()) return;
+    ouraDisconnect.hidden = false; ouraBtn.textContent = 'Refresh sleep data';
+    ouraStatus.textContent = 'Checking last night’s sleep…';
+    try {
+      var start = localDay(-1), end = localDay(0);
+      var url = '/api/sleep?start_date=' + encodeURIComponent(start) + '&end_date=' + encodeURIComponent(end);
+      var res = await fetch(url, { credentials: 'same-origin' });
+      if (res.status === 401) { ouraConnected(false); throw new Error('Oura sign-in expired. Please reconnect.'); }
+      if (!res.ok) throw new Error('Oura data is unavailable right now (HTTP ' + res.status + ').');
+      var data = await res.json();
+      var rows = data.data || [];
+      rows.sort(function(a,b) { return (b.day || '').localeCompare(a.day || ''); });
+      var item = rows[0];
+      if (!item || item.score == null) {
+        ouraStatus.textContent = 'I don’t see a sleep score for last night yet. How are you feeling?';
+        say('Good morning. How are you feeling?');
+      } else {
+        var score = Number(item.score);
+        ouraStatus.textContent = 'Last night’s Oura sleep score: ' + score + '. Scores are one signal; your own feeling matters too.';
+        say(score >= 80 ? 'Good morning. Your sleep score was ' + score + ' last night. Do you feel good?' : 'Good morning. Your sleep score was ' + score + ' last night. How are you feeling?');
+      }
+      feelings.classList.add('show');
+    } catch (err) {
+      ouraStatus.textContent = err.message || 'Could not load Oura data.';
+      if (/expired/i.test(ouraStatus.textContent)) { ouraConnected(false); ouraDisconnect.hidden = true; ouraBtn.textContent = 'Connect Oura'; }
+    }
+  }
+  ouraBtn.addEventListener('click', function() {
+    if (ouraConnected()) { loadOura(); return; }
+    location.href = '/auth/start';
+  });
+  ouraDisconnect.addEventListener('click', function() {
+    fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }).finally(function() {
+      ouraConnected(false); ouraDisconnect.hidden = true; ouraBtn.textContent = 'Connect Oura'; feelings.classList.remove('show');
+      ouraStatus.textContent = 'Disconnected. Your saved check-ins stay on this device.'; armHide();
+    });
+  });
+  fetch('/api/status', { credentials: 'same-origin' }).then(function(r) { return r.json(); }).then(function(x) {
+    ouraConnected(!!x.connected);
+    if (x.connected) loadOura();
+  }).catch(function() { ouraStatus.textContent = 'Start the Morning Eyes service to connect Oura.'; });
+
   /* sleep and wake: the eyes close and dim after a quiet minute, and any touch wakes them.
      A movement sensor would simply call morningEyes.wake() */
   var sleepOn = false, sleepT = 0;
@@ -464,7 +555,7 @@ body {
     speed = 0.3;
     setTimeout(function () { speed = M().speed; }, 900);
     sayRestore = true;
-    say('Hey there');
+    if (ouraConnected()) loadOura(); else say('Hey there');
   }
   autoSleepBtn.addEventListener('click', function () {
     sleepOn = !sleepOn;
